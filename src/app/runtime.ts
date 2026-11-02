@@ -10,9 +10,29 @@ import type {} from '@deepseek-ai/dsh-system-prompt'
 import type {} from '@deepseek-ai/dsh-tools'
 import type {} from '@deepseek-ai/dsh-skill'
 import type {} from '@deepseek-ai/dsh-subprocess'
-import { mkdirSync } from 'node:fs'
+import { mkdirSync, openSync, closeSync, unlinkSync, writeFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
-import { lockSync } from 'proper-lockfile'
+// proper-lockfile does not work on Windows (realpath/symlink-based locking fails).
+// On Windows we use a simple lock file with O_EXCL; on Unix we keep proper-lockfile.
+let lockSync: (dir: string, opts: { stale: number, onCompromised: (e: Error) => void }) => () => void
+if (process.platform === 'win32') {
+  lockSync = (dir: string, opts: { stale: number, onCompromised: (e: Error) => void }) => {
+    const lockFile = join(dir, '.lock')
+    // Remove a stale lock file older than the stale threshold
+    try {
+      const stat = statSync(lockFile)
+      if (Date.now() - stat.mtimeMs > opts.stale) unlinkSync(lockFile)
+    } catch { /* no existing lock */ }
+    // Create lock file with O_EXCL (fails if it already exists)
+    try { writeFileSync(lockFile, String(process.pid), { flag: 'wx' }) }
+    catch (error) { throw new Error(`Lock file is already being held: ${lockFile}`) }
+    return () => { try { unlinkSync(lockFile) } catch { /* already removed */ } }
+  }
+} else {
+  // On Unix, dynamically import proper-lockfile
+  const mod = require('proper-lockfile')
+  lockSync = mod.lockSync
+}
 import { Engine, key, reasonText, type EngineForSettings, type ReceiveResult, type Ticket, type Trigger } from '../core/index.ts'
 import { allowedSender, settingsPolicy } from '../policy.ts'
 import { SourceRegistry } from '../sources/registry.ts'

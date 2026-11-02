@@ -67,6 +67,15 @@ export class Commands {
   withSignal(signal?: AbortSignal): Commands { return signal ? new Commands(this.resolved, this.environment, AbortSignal.any([this.signal, signal])) : this }
   async run(program: string, args: string[], cwd?: string): Promise<string> {
     try {
+      // On Windows, .cmd/.bat files cannot be executed by execFile without a shell.
+      // We wrap them in cmd /c with windowsVerbatimArguments and manual quoting so that
+      // special characters like & in URL parameters are not interpreted by cmd.exe.
+      if (process.platform === 'win32' && /\.(cmd|bat)$/i.test(program)) {
+        const quotedArgs = args.map(arg => /[&|<>()^"%\s]/.test(arg) ? `"${arg}"` : arg)
+        const { stdout } = await exec('cmd', ['/c', program, ...quotedArgs], { cwd, signal: this.signal, timeout: TIMEOUT_MS, maxBuffer: 16 * 1024 * 1024, windowsVerbatimArguments: true,
+          env: { ...process.env, ...this.environment, GH_PROMPT_DISABLED: '1', LARKSUITE_CLI_NO_UPDATE_NOTIFIER: '1', LARKSUITE_CLI_NO_SKILLS_NOTIFIER: '1' } })
+        return stdout
+      }
       const { stdout } = await exec(program, args, { cwd, signal: this.signal, timeout: TIMEOUT_MS, maxBuffer: 16 * 1024 * 1024,
         env: { ...process.env, ...this.environment, GH_PROMPT_DISABLED: '1', LARKSUITE_CLI_NO_UPDATE_NOTIFIER: '1', LARKSUITE_CLI_NO_SKILLS_NOTIFIER: '1' } })
       return stdout
